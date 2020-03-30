@@ -1,15 +1,8 @@
 # Personal OpenVPN Server Deployment
-# Updates applied by Derek Ardolf / @ScriptAutomate / https://icanteven.io
-# 11/08/2019 - Version 2.x: 
 # - Released with many updates, and tracked here: https://github.com/ScriptAutomate/openvpn-cfn
-#
 # Created by John Creecy / @zugdug
-# 10/30/2017 - Version 1.0:
-# - Original: https://gist.github.com/zugdud/b39eea02faa6926305f57fbde8d31b68
-# Original Linux Academy blog series walkthrough on building the old OpenVPN template:
-# - Part 1: https://linuxacademy.com/blog/tutorials/roll-vpn-aws-cloudformation-part-one/
-# - Part 2: https://linuxacademy.com/blog/tutorials/roll-vpn-aws-cloudformation-part-two/
-# - Part 3: https://linuxacademy.com/blog/tutorials/how-to-roll-your-own-vpn-with-aws-cloudformation-part-three/
+# Modify by yuantc
+# 1/3/2020 - Version 2.0:
 
 AWSTemplateFormatVersion: '2010-09-09'
 Description: OpenVPN Stack
@@ -17,7 +10,7 @@ Description: OpenVPN Stack
 Parameters:
   OpenVPNProtocol:
     Type: String
-    Default: udp
+    Default: tcp
     AllowedValues: 
       - udp
       - tcp
@@ -34,24 +27,32 @@ Parameters:
     Type: AWS::EC2::KeyPair::KeyName
     Description: SSH Key for the OpenVPN Instance
     ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: VpcId of your existing Virtual Private Cloud (VPC)
+    ConstraintDescription: must be the VPC Id of an existing Virtual Private Cloud.
 
+  SubnetId:
+    Type: 'AWS::EC2::Subnet::Id'
+    Description: SubnetId of an existing public subnet in your Virtual Private Cloud (VPC)
+    ConstraintDescription: must be an existing public subnet in the selected Virtual Private Cloud.
+  PushRoute:
+    Type: String
+    Default: 10.20.0.0 255.255.0.0
+    Description: openvpn push route to client. Eg 10.20.0.0 255.255.0.0
   ClientIPCIDR:
     Type: String
     Default: 0.0.0.0/0
     Description: CIDR IP to be granted access by the SG, use 0.0.0.0/0 to accept all IPs
     AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
 
-  # Parameter store makes finding latest AMI image id easy
-  # Is region locked, by default. Wherever CFN is spun up,
-  #  resulting image id is specific to source region!
-  # Source: https://aws.amazon.com/blogs/compute/query-for-the-latest-amazon-linux-ami-ids-using-aws-systems-manager-parameter-store/
   LatestAmiId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
 
   OpenVPNVersion:
     Type: "String"
-    Default: "2.4.7" # Latest Tested Version on Amazon Linux 2
+    Default: "2.4.8" # Latest Tested Version on Amazon Linux 2
 
   EasyRSAREQCN:
     Type: "String"
@@ -65,65 +66,6 @@ Parameters:
       - ec
 
 Resources:
-
-  # Our VPC, most of our resources will be provisioned within
-  OpenVPNVPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.0.0.0/22 # We only need 1 IPaddress for our OpenVPN server, I just like even numbers and 8-bit subnets
-      Tags:
-      - Key: Name
-        Value: personal-OpenVPN-vpc
-
-  # The only subnet we will create within our VPC, our OpenVPN server will be provisioned within
-  # This subnet will be assigned a default route out to the internet, hence the name.
-  MyPublicSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref OpenVPNVPC
-      CidrBlock: 10.0.0.0/24 # 8-bit subnet provides 256 addresses, 251 of which are usable
-      Tags:
-      - Key: Name
-        Value: personal-OpenVPN-publicSubnet
-
-  # We will need our VPC to have access to the internet
-  myInternetGateway:
-      Type: "AWS::EC2::InternetGateway"
-      Properties:
-        Tags:
-        - Key: Name
-          Value: personal-OpenVPN-myIGW
-
-  # The VPC route table
-  myRouteTablePublic:
-      Type: "AWS::EC2::RouteTable"
-      Properties:
-        VpcId: !Ref OpenVPNVPC
-        Tags:
-          - Key: Name
-            Value: personal-OpenVPN-myRouteTablePublic
-
-  # Attach the Internet Gateway to OpenVPNVPC
-  AttachInternetGateway:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref OpenVPNVPC
-      InternetGatewayId: !Ref myInternetGateway
-
-  # Add a default route to our VPCs internet gateway
-  RouteDefaultPublic:
-    Type: "AWS::EC2::Route"
-    Properties:
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref myInternetGateway
-      RouteTableId: !Ref myRouteTablePublic
-
-  # Associate our route table to our subnet
-  MyPublicSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref MyPublicSubnet
-      RouteTableId: !Ref myRouteTablePublic
 
   # Request a new Elastic IP Address
   OpenVPNEIP:
@@ -144,7 +86,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: SG for OpenVPN Server
-      VpcId: !Ref OpenVPNVPC
+      VpcId: !Ref VpcId 
       SecurityGroupIngress:
         - IpProtocol: !Ref OpenVPNProtocol
           FromPort: !Ref OpenVPNPort
@@ -165,7 +107,7 @@ Resources:
         - Effect: Allow
           Principal:
             Service:
-            - ec2.amazonaws.com
+            - ec2.amazonaws.com.cn
           Action:
           - sts:AssumeRole
       Path: "/"
@@ -189,7 +131,7 @@ Resources:
             Effect: Allow
             Resource: !Join 
               - ''
-              - - 'arn:aws:s3:::'
+              - - 'arn:aws-cn:s3:::'
                 - !Ref OpenVPNS3Bucket
                 - /*
                 
@@ -209,7 +151,7 @@ Resources:
   myNetworkInterface:
     Type: AWS::EC2::NetworkInterface
     Properties:
-      SubnetId: !Ref MyPublicSubnet
+      SubnetId: !Ref SubnetId 
       Description: Public Interface
       GroupSet:
       - !Ref OpenVPNInstanceSG
@@ -422,7 +364,8 @@ Resources:
                 proto ${OpenVPNProtocol}
                 dev tun
                 server 172.16.0.0 255.255.252.0
-                push "redirect-gateway def1"
+                #push "redirect-gateway def1"
+                push "route ${PushRoute}"
                 ca /opt/easy-rsa/pki/ca.crt
                 cert /opt/easy-rsa/pki/issued/server.crt
                 key /opt/easy-rsa/pki/private/server.key
@@ -469,6 +412,12 @@ Resources:
         # Upload the client file archive and cfn-init log to S3
         upload_files:
           commands:
+            00_setup_default_region:
+              cwd: "~"
+              command: !Sub |
+                mkdir -p ~/.aws
+                echo "[default]" >~/.aws/config 
+                echo "region = cn-northwest-1 " >>~/.aws/config 
             01_upload_file_openvpn-clientuser.ovpn:
               cwd: "/opt/easy-rsa/pki"
               command: !Sub |
