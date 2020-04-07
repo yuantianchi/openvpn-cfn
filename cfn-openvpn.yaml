@@ -14,7 +14,12 @@ Parameters:
     AllowedValues: 
       - udp
       - tcp
-
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3a.small 
   OpenVPNPort:
     Type: Number
     Default: 1194
@@ -167,7 +172,7 @@ Resources:
     DependsOn: OpenVPNS3Bucket
     Properties:
       ImageId: !Ref LatestAmiId
-      InstanceType: t2.micro
+      InstanceType: !Ref InstanceType 
       SourceDestCheck: false
       KeyName: !Ref SSHKeyName
       NetworkInterfaces:
@@ -385,7 +390,6 @@ Resources:
                 status openvpn-status.log
                 log-append /var/log/openvpn.log
                 verb 3
-                max-clients 5
                 user nobody
                 group nobody
               mode: "000644"
